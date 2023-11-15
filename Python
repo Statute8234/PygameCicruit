@@ -1,0 +1,569 @@
+# pygame
+import pygame
+import random
+import sys, os
+import pygame_widgets
+from pygame_widgets.slider import Slider
+from pygame_widgets.textbox import TextBox
+# PySpice
+import numpy as np
+import matplotlib as plt
+import PySpice
+import PySpice.Logging.Logging as Logging
+from PySpice.Spice.Netlist import Circuit, SubCircuit, SubCircuitFactory
+from PySpice.Unit import u_Ohm, u_V
+from PySpice.Unit import *
+logger = Logging.setup_logging()
+pygame.init()
+screenWidth, screenHeight = 700, 700
+screen = pygame.display.set_mode((screenWidth, screenHeight), pygame.RESIZABLE)
+pygame.display.set_caption("Cicruit")
+circuit = Circuit('Cicruit')
+clock = pygame.time.Clock()
+pygame.display.flip()
+# colors
+def RandomColor():
+    return (random.randint(0,255),random.randint(0,255),random.randint(0,255))
+def OppositeColor(color):
+    return (255 - color[0],255 - color[1],255 - color[2])
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLACK = (0,0,0)
+WHITE = (255, 255, 255)
+LIGHTGRAY = (169,169,169)
+ORANGERED = (255,69,0)
+# text
+class Text:
+    def __init__(self, text, font_size, color, position):
+        self.text = text
+        self.font_size = font_size
+        self.color = color
+        self.position = position
+        self.font = pygame.font.Font(None, self.font_size)  # You can specify a font file or use None for default font
+        self.rendered_text = None
+
+    def update(self, new_text):
+        self.text = new_text
+        self.rendered_text = None  # Clear the rendered text to update it
+
+    def render(self, screen):
+        if self.rendered_text is None:
+            self.rendered_text = self.font.render(self.text, True, self.color)
+        screen.blit(self.rendered_text, self.position)
+# buttons
+class Button:
+    def __init__(self, x, y, width, height, text, active_color, inactive_color):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.text = text
+        self.active_color = active_color
+        self.inactive_color = inactive_color
+        self.color = self.inactive_color
+        self.font_size = min(self.width // len(self.text) + 10, self.height)
+        self.font = pygame.font.Font(None, self.font_size)
+        self.clicked = False
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+        text_surface = self.font.render(self.text, True, BLACK)
+        text_rect = text_surface.get_rect(center=(self.x + self.width // 2, self.y + self.height // 2))
+        screen.blit(text_surface, text_rect)
+
+    def handle_event(self, event):
+        mouse_pos = pygame.mouse.get_pos()
+        if self.x < mouse_pos[0] < self.x + self.width and self.y < mouse_pos[1] < self.y + self.height:
+            self.color = self.active_color
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    self.clicked = True  # Add this line to set the 'clicked' attribute to True
+                    self.color = self.active_color
+        else:
+            self.color = self.inactive_color
+
+    def reset(self):
+        self.clicked = False
+        self.color = self.active_color
+MenuButton = Button(120, 10, 100, 40, "Menu", RED, GREEN)
+CircuitButton = Button(230, 10, 100, 40, "Circuit", RED, GREEN)
+# AND buttons
+class AndButton:
+    def __init__(self, x, y, width, height, active_color, inactive_color):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.active_color = active_color
+        self.inactive_color = inactive_color
+        self.color = self.inactive_color
+        self.dragging = False
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+        
+    def handle_event(self, event):
+        mouse_pos = pygame.mouse.get_pos()
+        if self.x < mouse_pos[0] < self.x + self.width and self.y < mouse_pos[1] < self.y + self.height:
+            self.color = self.active_color
+            if event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    self.dragging = False
+            elif event.type == pygame.MOUSEMOTION:
+                if self.dragging:
+                    # Move the circle with the mouse
+                    new_x = event.pos[0] + self.drag_offset[0]
+                    new_y = event.pos[1] + self.drag_offset[1]
+                    self.x = new_x
+                    self.y = new_y
+        else:
+            self.color = self.inactive_color
+
+    def reset(self):
+        self.clicked = False
+        self.color = self.active_color
+    
+    def create_gate(self):
+        if self.clicked:
+            self.components()
+            self.inputs()
+            self.output()
+
+    def components(self):
+        circuit.V(1, '+5V', circuit.gnd, 5.0 * u_V)
+        circuit.V(2, '-5V', circuit.gnd, -5.0 * u_V)
+        circuit.R(1, 1, 2, 10.0 * u_Ohm)
+
+    def inputs(self):
+        circuit.V(3, 'Input_A', circuit.gnd, 0.0 * u_V)
+        circuit.V(4, 'Input_B', circuit.gnd, 0.0 * u_V)
+
+    def output(self):
+        circuit.R(2, 6, circuit.gnd, 1.0 * u_Ohm)
+        circuit.M(1, 6, circuit.gnd, 6, 6, model='BSIM3')
+and_button = AndButton(100,100,19,19,RED,ORANGERED)
+# Options
+class Options:
+    def __init__(self, x, y, color, width, height):
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.origionalX = self.x
+        self.color = color
+        self.width = width
+        self.height = height
+        self.rectangle_visible = True
+
+    def updatePosition(self):
+        if self.rectangle_visible:
+            self.x = self.origionalX
+        else:
+            self.x = -self.width + 10
+        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+        pygame.draw.rect(screen, OppositeColor(self.color), (self.x, self.y, self.width, self.height),2)
+
+    def handle_event(self, event):
+        global staticDragging, follow_button
+        mouse_pos = pygame.mouse.get_pos()
+        if self.x < mouse_pos[0] < self.x + self.width and self.y < mouse_pos[1] < self.y + self.height:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    self.rectangle_visible = not self.rectangle_visible
+
+options = Options(0,0,WHITE,100,screenHeight)
+# Dropdown class
+class Dropdown:
+    def __init__(self,x, y, width, height, items):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.items = items
+        self.is_open = False
+        self.selected_item = None
+
+    def draw(self, surface):
+        pygame.draw.rect(surface, WHITE, self.rect)
+        pygame.draw.rect(surface, BLACK, self.rect, 2)
+        font = pygame.font.Font(None, 24)
+        text = font.render(self.selected_item if self.selected_item else "Select an item", True, BLACK)
+        surface.blit(text, (self.rect.x + 10, self.rect.y + 5))
+
+        if self.is_open:
+            for i, item in enumerate(self.items):
+                item_rect = pygame.Rect(self.rect.x, self.rect.y + (i + 1) * self.rect.height, self.rect.width, self.rect.height)
+                pygame.draw.rect(surface, WHITE, item_rect)
+                pygame.draw.rect(surface, BLACK, item_rect, 2)
+
+                text = font.render(item, True, BLACK)
+                surface.blit(text, (item_rect.x + 10, item_rect.y + 5))
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                pygame.time.delay(20)
+                self.is_open = not self.is_open
+            elif self.is_open:
+                for i, item in enumerate(self.items):
+                    item_rect = pygame.Rect(self.rect.x, self.rect.y + (i + 1) * self.rect.height,
+                                            self.rect.width, self.rect.height)
+                    if item_rect.collidepoint(event.pos):
+                        self.selected_item = item
+                        self.is_open = False
+                        break
+# input box
+class InputBox:
+    def __init__(self, x, y, width, height, active_color, inactive_color, text = ''):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.text = text
+        self.rect = pygame.Rect(x, y, width, height)
+        self.active_color = active_color
+        self.inactive_color = inactive_color
+        self.color = self.inactive_color
+        self.text = text
+        self.font_size = min(self.width // len(self.text) + 10, self.height)
+        self.font = pygame.font.Font(None, self.font_size)
+        self.active = False
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            pygame.time.delay(20)
+            if self.rect.collidepoint(event.pos):
+                self.active = not self.active
+                self.text = ""
+            else:
+                self.active = False
+
+        if event.type == pygame.KEYDOWN and self.active:
+            if event.key == pygame.K_RETURN:
+                self.text = self.text
+                self.active = False
+            elif event.key == pygame.K_BACKSPACE:
+                pygame.time.delay(20)
+                self.text = self.text[:-1]
+            else:
+                self.text += event.unicode
+            
+        if self.active:
+            self.color = self.active_color
+        else:
+            self.color = self.inactive_color
+        
+    def update(self):
+        width = max(200, self.font.render(self.text, True, WHITE).get_width()+10)
+        self.rect.w = width
+
+    def draw(self, screen):
+        txt_surface = self.font.render(self.text, True, WHITE)
+        width = max(200, txt_surface.get_width()+10)
+        self.rect.w = width
+        pygame.draw.rect(screen, self.color, self.rect, 0)
+        pygame.draw.rect(screen, WHITE, self.rect, 2)
+        screen.blit(txt_surface, (self.rect.x+5, self.rect.y+5))
+
+# Circuit information window
+class CircuitInformation:
+    def __init__(self, width, height, position=(0, 0)):
+        self.width = width
+        self.height = height
+        self.x, self.y = position[0], position[1]
+        self.visible = False
+        self.closeButton = Button(self.x + 2, self.y + 2, 40, 40, "X", RED, RED)
+        # Requirements
+        self.requirements = Text("Requirements", 52, BLACK, (10,10))
+        self.requirementName = Text("Circuit Name", 35, BLACK, (10,100))
+        self.inputName = InputBox(170,100,200,25,LIGHTGRAY,BLACK,"Name:")
+        self.requirementPurpose = Text("Circuit Purpose", 35, BLACK, (10,150))
+        self.inputPurpose = InputBox(200,150,200,25,LIGHTGRAY,BLACK,"Purpose:")
+        # Environmental Considerations
+        self.environmentalTemperature = Text("Temperature", 35, BLACK, (10,200))
+        self.temperature_slider = Slider(screen, 170, 210, 200, 10, min=0, max=100, step=1, initial=25)
+        self.temperature_output = TextBox(screen, 390, 190, 50, 50, fontSize=30)
+        self.temperature_output.disable()
+        self.environmentalNominal = Text("Nominal Temperature", 35, BLACK, (10,250))
+        self.nominal_slider = Slider(screen, 280, 260, 200, 10, min=0, max=100, step=1, initial=25)
+        self.nominal_output = TextBox(screen, 500, 240, 50, 50, fontSize=30)
+        self.nominal_output.disable()
+        # Building
+        self.requirementBuilding = Text("Circuit Building", 35, BLACK, (10,300))
+        self.dropdownBuilding = Dropdown(210, 300, 150, 30, ["Digital", "Analog", "Mixed-signal"])
+
+    def update(self):
+        global screenWidth, screenHeight
+        self.width = screenWidth
+        self.height = screenHeight
+        self.closeButton.x = self.x + self.width - 42
+        self.closeButton.y = self.y + 2
+
+    def draw(self, screen):
+        if self.visible:
+            pygame.draw.rect(screen, WHITE, (self.x - 2, self.y - 2, self.width + 4, self.height + 4))
+            pygame.draw.rect(screen, RED, (self.x, self.y, self.width, self.height), 2)
+            self.closeButton.draw(screen)
+            self.requirements.render(screen)
+            self.requirementName.render(screen)
+            self.inputName.draw(screen)
+            self.requirementPurpose.render(screen)
+            self.inputPurpose.draw(screen)
+            self.requirementBuilding.render(screen)
+            self.dropdownBuilding.draw(screen)
+            self.environmentalTemperature.render(screen)
+            self.temperature_output.setText(round(self.temperature_slider.getValue(), 2))
+            self.environmentalNominal.render(screen)
+            self.nominal_output.setText(round(self.nominal_slider.getValue(), 2))
+
+    def handle_event(self, event):
+        if self.visible:
+            self.closeButton.handle_event(event)
+            pygame_widgets.update(event)
+            if self.closeButton.clicked:
+                self.visible = False
+                self.closeButton.clicked = False
+            # input box
+            self.inputName.handle_event(event)
+            self.inputPurpose.handle_event(event)
+            self.dropdownBuilding.handle_event(event)
+circuitWindow = CircuitInformation(screenWidth, screenHeight)
+# MinMenu
+class MenuWindow:
+    def __init__(self, width, height, position=(0, 0)):
+        self.width = width
+        self.height = height
+        self.x, self.y = position[0], position[1]
+        self.title = "Menu"
+        self.font_size = min(self.width // len(self.title), self.height // 10)
+        self.font = pygame.font.Font(None, self.font_size)
+        self.background_color = WHITE
+        self.showButtons = True
+        self.visible = False
+        self.showSliders = False
+        # Menu buttons
+        self.x, self.y = 0, 0
+        self.scaleX, self.scaleY = 200, 30
+        # buttons
+        self.play_button = Button(self.x, self.y, self.scaleX, self.scaleY, "Play", LIGHTGRAY, RED)
+        self.tutorial_button = Button(self.x, self.y, self.scaleX, self.scaleY, "Tutorial", LIGHTGRAY, RED)
+        self.settings_button = Button(self.x, self.y, self.scaleX, self.scaleY, "Settings", LIGHTGRAY, RED)
+        self.exit_button = Button(self.x, self.y, self.scaleX, self.scaleY, "Exit", LIGHTGRAY, RED)
+        self.back_button = Button(self.x, self.y, self.scaleX, self.scaleY, "Back", LIGHTGRAY, RED)
+        # Tutorial text
+        self.tutorialText = ''
+        self.tutorial = Text(self.tutorialText, 36, BLACK, (10, 160))
+        # Sliders
+        self.sound = Text("Music", 36, BLACK, (10, 160))
+        self.sound_slider = Slider(screen, 10, 200, 200, 10, min=0, max=1.0, step=0.1, initial=1.0)
+        self.sound_output = TextBox(screen, 220, 170, 50, 50, fontSize=30)
+        self.sound_output.disable()
+        self.sound_effects = Text("Sound Effects", 36, BLACK, (10, 260))
+        self.sound_effects_slider = Slider(screen, 10, 300, 200, 10, min=0, max=1.0, step=0.1, initial=1.0)
+        self.sound_effects_output = TextBox(screen, 220, 270, 50, 50, fontSize=30)
+        self.sound_effects_output.disable()
+        self.frame_rate = Text("Frame Rate", 36, BLACK, (10, 360))
+        self.frame_rate_slider = Slider(screen, 10, 400, 128, 10, min=1, max=64, step=1, initial=100)
+        self.frame_rate_output = TextBox(screen, 148, 370, 50, 50, fontSize=30)
+        self.frame_rate_output.disable()
+
+    def update(self):
+        global screenWidth, screenHeight
+        self.width = screenWidth
+        self.height = screenHeight
+        # ----------------
+        self.play_button.x = (self.x + self.width / 2) - 100
+        self.play_button.y = (self.y + self.height / 2) - 150
+        self.tutorial_button.x = (self.x + self.width / 2) - 100
+        self.tutorial_button.y = (self.y + self.height / 2) - 112
+        self.settings_button.x = (self.x + self.width / 2) - 100
+        self.settings_button.y = (self.y + self.height / 2) - 75
+        self.exit_button.x = (self.x + self.width / 2) - 100
+        self.exit_button.y = (self.y + self.height / 2) - 40
+        self.back_button.x = (self.x + self.width / 2) - 100
+        self.back_button.y = 500
+
+    def draw(self, screen):
+        if self.visible:
+            pygame.draw.rect(screen, self.background_color, (self.x - 2, self.y - 2, self.width + 4, self.height + 4))
+            pygame.draw.rect(screen, RED, (self.x, self.y, self.width, self.height), 2)
+            if self.showButtons:
+                self.play_button.draw(screen)
+                self.tutorial_button.draw(screen)
+                self.settings_button.draw(screen)
+                self.exit_button.draw(screen)
+            else:
+                self.tutorial.render(screen)
+                self.back_button.draw(screen)
+
+            if (self.showSliders):
+                self.sound.render(screen)
+                self.sound_effects.render(screen)
+                self.frame_rate.render(screen)
+                # ///
+                self.sound_output.setText(round(self.sound_slider.getValue(), 2))
+                self.sound_slider.draw()
+                self.sound_output.draw()
+                self.sound_effects_output.setText(round(self.sound_effects_slider.getValue(), 2))
+                self.sound_effects_slider.draw()
+                self.sound_effects_output.draw()
+                self.frame_rate_output.setText(self.frame_rate_slider.getValue())
+                self.frame_rate_slider.draw()
+                self.frame_rate_output.draw()
+
+            text_surface = self.font.render(self.title, True, BLACK)
+            text_rect = text_surface.get_rect(center=(self.x + self.width // 2, self.y + self.height // 10))
+            screen.blit(text_surface, text_rect)
+
+    def handle_event(self, event):
+        global running
+        if self.visible:
+            if self.showButtons:
+                self.play_button.handle_event(event)
+                self.tutorial_button.handle_event(event)
+                self.settings_button.handle_event(event)
+                self.exit_button.handle_event(event)
+            else:
+                self.back_button.handle_event(event)
+            
+            if self.play_button.clicked:
+                self.title = 'Menu'
+                self.showButtons = True
+                self.play_button.clicked = False
+                self.visible = False
+                self.showSliders = False
+            elif self.back_button.clicked:
+                self.title = 'Menu'
+                self.showButtons = True
+                self.back_button.clicked = False
+                self.showSliders = False
+                self.reset_buttons()
+            elif self.tutorial_button.clicked:
+                self.title = 'Tutorial'
+                self.showButtons = False
+                self.tutorial_button.clicked = False
+                self.showSliders = False
+                self.tutorialText = 'This is a test'
+                self.reset_buttons()
+            elif self.settings_button.clicked:
+                self.title = 'Settings'
+                self.showButtons = False
+                self.settings_button.clicked = False
+                self.showSliders = True
+                self.tutorialText = ''
+                self.sound_output.setText(round(self.sound_slider.getValue(), 2))
+                self.sound_effects_output.setText(round(self.sound_slider.getValue(), 2))
+                self.frame_rate_output.setText(round(self.sound_slider.getValue(), 2))
+            elif self.exit_button.clicked:
+                running = False
+                sys.exit()
+
+            self.tutorial.text = self.tutorialText
+            self.tutorial = Text(self.tutorialText, 36, BLACK, (10, 160))
+
+    def reset_buttons(self):
+        self.play_button.clicked = False
+        self.tutorial_button.clicked = False
+        self.settings_button.clicked = False
+        self.back_button.clicked = False
+        self.exit_button.clicked = False
+menuWindow = MenuWindow(screenWidth, screenHeight)
+# grid
+class CreateGrid:
+    def __init__(self, color, offset, width, initial_spacing):
+        self.color = color
+        self.offset = offset
+        self.width = width
+        self.spacing = initial_spacing
+
+    def draw_horizontal_lines(self, screen):
+        for y in range(self.offset[1], screenHeight, self.spacing):
+            pygame.draw.line(screen, self.color, (0, y), (screenWidth, y), self.width)
+
+    def draw_vertical_lines(self, screen):
+        for x in range(self.offset[0], screenWidth, self.spacing):
+            pygame.draw.line(screen, self.color, (x, 0), (x, screenHeight), self.width)
+
+    def draw(self, screen):
+        self.draw_horizontal_lines(screen)
+        self.draw_vertical_lines(screen)
+createGrid = CreateGrid(BLACK, (0, 0), 1, 20)
+start_offset = (0, 0)
+zoom_factor = 1.0
+# Simulate the circuit
+def simulateCircuit():
+    simulator = circuit.simulator(temperature=25, nominal_temperature=25)
+    analysis = simulator.transient(step_time=1, end_time=10)
+# loop
+running = True
+dragging = False
+while running:
+    for event in pygame.event.get():
+        # Check if any window is open
+        any_window_open = circuitWindow.visible or menuWindow.visible
+        # event.type
+        if event.type == pygame.QUIT:
+            running = False
+            sys.exit()
+        elif event.type == pygame.VIDEORESIZE:
+            screenWidth, screenHeight = event.size
+            screen = pygame.display.set_mode((screenWidth, screenHeight), pygame.RESIZABLE)
+        # click and drag
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 3:
+                if not any_window_open:
+                    dragging = True
+                    start_offset = event.pos
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 3:
+                dragging = False
+        elif event.type == pygame.MOUSEMOTION:
+            if dragging:
+                offset_change = (event.pos[0] - start_offset[0], event.pos[1] - start_offset[1])
+                new_offset_x = createGrid.offset[0] + offset_change[0]
+                new_offset_y = createGrid.offset[1] + offset_change[1]
+                # Set bounds to prevent moving across negative x and y
+                min_offset_x, min_offset_y = 0, 0
+                new_offset_x = min(new_offset_x, min_offset_x)
+                new_offset_y = min(new_offset_y, min_offset_y)
+                createGrid.offset = (new_offset_x, new_offset_y)
+                start_offset = event.pos
+        # zoom
+        elif event.type == pygame.MOUSEWHEEL:
+            if event.y == 1 and createGrid.spacing < 50:
+                createGrid.spacing += 1
+            elif event.y == -1 and createGrid.spacing > 5:
+                createGrid.spacing -= 1
+        # Handle button events only if no window is open
+        if not any_window_open:
+            CircuitButton.handle_event(event)
+            MenuButton.handle_event(event)
+            if CircuitButton.clicked:
+                circuitWindow.visible = not circuitWindow.visible 
+                CircuitButton.clicked = False
+            if MenuButton.clicked:
+                menuWindow.visible = not menuWindow.visible 
+                MenuButton.clicked = False
+        options.handle_event(event)
+        and_button.handle_event(event)
+        
+    circuitSurface = pygame.Surface((circuitWindow.width, circuitWindow.height))
+    menuSurface = pygame.Surface((menuWindow.width, menuWindow.height))
+    screen.fill(WHITE)
+    # buttons
+    createGrid.draw(screen)
+    CircuitButton.draw(screen)
+    MenuButton.draw(screen)
+    options.updatePosition()
+    and_button.draw(screen)
+    # windows
+    if circuitWindow.visible:
+        circuitWindow.draw(circuitSurface)
+        circuitWindow.handle_event(event)
+        circuitWindow.update()
+        screen.blit(circuitSurface, (0, 0))
+    if menuWindow.visible:
+        menuWindow.draw(menuSurface)
+        menuWindow.handle_event(event)
+        menuWindow.update()
+        screen.blit(menuSurface, (0, 0))
+    # update
+    pygame.display.update()
+    clock.tick(64)
+    simulateCircuit()
